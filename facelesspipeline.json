@@ -1,0 +1,452 @@
+{
+  "name": "Faceless AI Video Factory (Prompt → Generate → Poll → Download → Publish)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "ManualTrigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        200,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "topic", "value": "3 negotiation tactics for cross-border deals" },
+            { "name": "language", "value": "en" },
+            { "name": "tone", "value": "authoritative, concise, high-retention" },
+            { "name": "durationSeconds", "value": "45" },
+            { "name": "platform", "value": "shorts" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "SetInputs",
+      "name": "Set Inputs",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        420,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "chat",
+        "operation": "complete",
+        "model": "gpt-4.1-mini",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are a senior short-form content producer. Produce a structured JSON plan for a faceless video: hook, voiceover script, scene-by-scene visuals, on-screen text, b-roll prompts, and a title + hashtags. Return ONLY valid JSON."
+          },
+          {
+            "role": "user",
+            "content": "Topic: {{$json.topic}}\nLanguage: {{$json.language}}\nTone: {{$json.tone}}\nDuration: {{$json.durationSeconds}} seconds\nPlatform: {{$json.platform}}\n\nReturn JSON with keys: title, hook, voiceover, scenes (array of {scene, visualPrompt, onScreenText}), musicMood, hashtags."
+          }
+        ],
+        "options": {}
+      },
+      "id": "OpenAIPlan",
+      "name": "Generate Video Plan (OpenAI)",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 4,
+      "position": [
+        660,
+        220
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "REPLACE_WITH_YOUR_OPENAI_CRED_ID",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "/*\n  Normalize model output into JSON.\n  Some models wrap JSON in markdown fences; this strips them.\n*/\nconst raw = $json?.choices?.[0]?.message?.content ?? $json?.text ?? '';\nconst cleaned = raw\n  .replace(/^```json\\s*/i, '')\n  .replace(/^```\\s*/i, '')\n  .replace(/```\\s*$/i, '')\n  .trim();\n\nlet plan;\ntry {\n  plan = JSON.parse(cleaned);\n} catch (e) {\n  // If parsing fails, store raw content for debugging.\n  return [{ json: { error: 'PLAN_JSON_PARSE_FAILED', raw: cleaned } }];\n}\n\nreturn [{ json: { ...$json, plan } }];"
+      },
+      "id": "ParsePlan",
+      "name": "Parse Plan JSON",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [
+        900,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://VIDEO_API_BASE.example.com/v1/videos",
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.VIDEO_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"title\": $json.plan.title,\n  \"hook\": $json.plan.hook,\n  \"voiceover\": $json.plan.voiceover,\n  \"scenes\": $json.plan.scenes,\n  \"musicMood\": $json.plan.musicMood,\n  \"durationSeconds\": Number($json.durationSeconds),\n  \"language\": $json.language,\n  \"render\": {\n    \"aspectRatio\": \"9:16\",\n    \"captions\": true,\n    \"style\": \"faceless-broll\"\n  }\n} }}",
+        "options": {}
+      },
+      "id": "SubmitVideoRequest",
+      "name": "Submit Video Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1140,
+        220
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_VIDEO_API_HEADER_AUTH_CRED_ID",
+          "name": "Video API Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "number": [
+            { "name": "pollAttempt", "value": 0 },
+            { "name": "maxPollAttempts", "value": 20 }
+          ]
+        },
+        "options": {}
+      },
+      "id": "InitPollCounters",
+      "name": "Init Poll Counters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Expect video request response includes an id, e.g. { id: \"vid_123\" }\nconst requestId = $json.id || $json.data?.id || $json.requestId;\nif (!requestId) {\n  return [{ json: { ...$json, error: 'MISSING_VIDEO_REQUEST_ID' } }];\n}\nreturn [{ json: { ...$json, requestId } }];"
+      },
+      "id": "ExtractRequestId",
+      "name": "Extract Request ID",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        90
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 15,
+        "unit": "seconds"
+      },
+      "id": "Wait15s",
+      "name": "Wait 15s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        90
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ `https://VIDEO_API_BASE.example.com/v1/videos/${$json.requestId}` }}",
+        "method": "GET",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.VIDEO_API_KEY }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "CheckStatus",
+      "name": "Check Video Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1800,
+        90
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_VIDEO_API_HEADER_AUTH_CRED_ID",
+          "name": "Video API Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "/*\n  Normalize status payload.\n  Expected provider response shapes vary.\n*/\nconst status = ($json.status || $json.data?.status || '').toString().toLowerCase();\nconst videoUrl = $json.videoUrl || $json.data?.videoUrl || $json.output?.url || $json.result?.url;\n\nreturn [{ json: { ...$json, normalized: { status, videoUrl } } }];"
+      },
+      "id": "NormalizeStatus",
+      "name": "Normalize Status",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        90
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            { "value1": "={{$json.normalized.status}}", "operation": "equal", "value2": "completed" }
+          ]
+        }
+      },
+      "id": "IfCompleted",
+      "name": "If Completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        90
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            { "value1": "={{$json.normalized.status}}", "operation": "in", "value2": "failed,error,canceled" }
+          ]
+        }
+      },
+      "id": "IfFailed",
+      "name": "If Failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const pollAttempt = Number($json.pollAttempt ?? 0) + 1;\nconst maxPollAttempts = Number($json.maxPollAttempts ?? 20);\nconst shouldStop = pollAttempt >= maxPollAttempts;\n\nreturn [{ json: { ...$json, pollAttempt, maxPollAttempts, shouldStop } }];"
+      },
+      "id": "IncrementPoll",
+      "name": "Increment Poll Attempt",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            { "value1": "={{$json.shouldStop}}", "operation": "isTrue" }
+          ]
+        }
+      },
+      "id": "IfStop",
+      "name": "Stop Polling?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$json.normalized.videoUrl}}",
+        "method": "GET",
+        "responseFormat": "file",
+        "options": {}
+      },
+      "id": "DownloadVideo",
+      "name": "Download Final Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2400,
+        90
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://PUBLISH_API.example.com/v1/publish",
+        "method": "POST",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{ $env.PUBLISH_API_KEY }}" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "title", "value": "={{$json.plan?.title || 'Untitled'}}" },
+            { "name": "hashtags", "value": "={{($json.plan?.hashtags || []).join(' ')}}" },
+            { "name": "platform", "value": "={{$json.platform}}" },
+            { "name": "file", "type": "binary", "value": "data" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "PublishVideo",
+      "name": "Publish Video (Placeholder)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2620,
+        90
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_PUBLISH_API_HEADER_AUTH_CRED_ID",
+          "name": "Publish API Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "finalStatus", "value": "completed" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ReturnSuccess",
+      "name": "Return Success",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        2850,
+        90
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "finalStatus", "value": "failed" },
+            { "name": "reason", "value": "Video provider returned a failure status." }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ReturnFail",
+      "name": "Return Failure",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        2850,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "finalStatus", "value": "timeout" },
+            { "name": "reason", "value": "Polling exceeded max attempts before completion." }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ReturnTimeout",
+      "name": "Return Timeout",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        2850,
+        350
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{ "node": "Set Inputs", "type": "main", "index": 0 }]]
+    },
+    "Set Inputs": {
+      "main": [[{ "node": "Generate Video Plan (OpenAI)", "type": "main", "index": 0 }]]
+    },
+    "Generate Video Plan (OpenAI)": {
+      "main": [[{ "node": "Parse Plan JSON", "type": "main", "index": 0 }]]
+    },
+    "Parse Plan JSON": {
+      "main": [[{ "node": "Submit Video Request", "type": "main", "index": 0 }]]
+    },
+    "Submit Video Request": {
+      "main": [
+        [{ "node": "Extract Request ID", "type": "main", "index": 0 }],
+        [{ "node": "Init Poll Counters", "type": "main", "index": 0 }]
+      ]
+    },
+    "Init Poll Counters": {
+      "main": [[{ "node": "Wait 15s", "type": "main", "index": 0 }]]
+    },
+    "Extract Request ID": {
+      "main": [[{ "node": "Wait 15s", "type": "main", "index": 0 }]]
+    },
+    "Wait 15s": {
+      "main": [[{ "node": "Check Video Status", "type": "main", "index": 0 }]]
+    },
+    "Check Video Status": {
+      "main": [[{ "node": "Normalize Status", "type": "main", "index": 0 }]]
+    },
+    "Normalize Status": {
+      "main": [
+        [{ "node": "If Completed?", "type": "main", "index": 0 }],
+        [{ "node": "If Failed?", "type": "main", "index": 0 }]
+      ]
+    },
+    "If Completed?": {
+      "main": [
+        [{ "node": "Download Final Video", "type": "main", "index": 0 }],
+        [{ "node": "Increment Poll Attempt", "type": "main", "index": 0 }]
+      ]
+    },
+    "If Failed?": {
+      "main": [
+        [{ "node": "Return Failure", "type": "main", "index": 0 }],
+        [{ "node": "Increment Poll Attempt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Increment Poll Attempt": {
+      "main": [[{ "node": "Stop Polling?", "type": "main", "index": 0 }]]
+    },
+    "Stop Polling?": {
+      "main": [
+        [{ "node": "Return Timeout", "type": "main", "index": 0 }],
+        [{ "node": "Wait 15s", "type": "main", "index": 0 }]
+      ]
+    },
+    "Download Final Video": {
+      "main": [[{ "node": "Publish Video (Placeholder)", "type": "main", "index": 0 }]]
+    },
+    "Publish Video (Placeholder)": {
+      "main": [[{ "node": "Return Success", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionTimeout": 3600,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": true
+  },
+  "versionId": "1"
+}
